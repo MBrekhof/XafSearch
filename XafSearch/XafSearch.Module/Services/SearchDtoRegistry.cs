@@ -21,10 +21,12 @@ public class SearchDtoRegistry
     /// <summary>
     /// Compiles all active search configurations directly from the database.
     /// Called from Module.Setup() BEFORE model generation so types get proper IModelClass nodes.
+    /// Returns the set of compiled DTO full type names (used to clean orphaned model diffs).
     /// </summary>
-    public void CompileFromDatabase(string connectionString, ModuleBase module)
+    public HashSet<string> CompileFromDatabase(string connectionString, ModuleBase module)
     {
-        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var compiledTypeNames = new HashSet<string>();
+        if (string.IsNullOrWhiteSpace(connectionString)) return compiledTypeNames;
 
         try
         {
@@ -44,10 +46,9 @@ public class SearchDtoRegistry
             }
             catch
             {
-                return; // DB not ready yet
+                return compiledTypeNames; // DB not ready yet
             }
 
-            int compiled = 0;
             foreach (var config in configs)
             {
                 if (config.Fields.Count == 0) continue;
@@ -76,18 +77,20 @@ public class SearchDtoRegistry
                     module.AdditionalExportedTypes.Add(result.DtoType);
                 }
 
-                compiled++;
+                compiledTypeNames.Add(result.DtoType.FullName);
             }
 
-            if (compiled > 0)
+            if (compiledTypeNames.Count > 0)
             {
-                Tracing.Tracer.LogText($"SearchDtoRegistry: compiled {compiled} search panel(s) from database.");
+                Tracing.Tracer.LogText($"SearchDtoRegistry: compiled {compiledTypeNames.Count} search panel(s) from database.");
             }
         }
         catch (Exception ex)
         {
             Tracing.Tracer.LogError($"SearchDtoRegistry.CompileFromDatabase failed: {ex.Message}");
         }
+
+        return compiledTypeNames;
     }
 
     /// <summary>

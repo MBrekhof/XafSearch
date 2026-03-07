@@ -1,7 +1,7 @@
 # Runtime Search Panels for XAF
 
 **Date:** 2026-03-07
-**Status:** Approved
+**Status:** Implemented
 
 ## Problem
 
@@ -9,7 +9,7 @@ XAF's built-in column filtering is limited. The WLNCentral source generator crea
 
 ## Solution
 
-A runtime search panel system where admins configure search screens for any entity via UI. Search DTOs are compiled at runtime via Roslyn as `NonPersistentBaseObject` types, registered with XAF's type system without restart. Search form layout is customizable via XAF's Model Editor. Generated C# source can be exported for "graduation" to compiled code.
+A runtime search panel system where admins configure search screens for any entity via UI. Search DTOs are compiled at runtime via Roslyn as `NonPersistentBaseObject` types, registered with XAF's type system on startup. A restart is required after creating or modifying configurations. Search form layout is customizable via XAF's Model Editor (customizations persist across restarts). Generated C# source can be exported for "graduation" to compiled code.
 
 ## Data Model
 
@@ -51,6 +51,7 @@ One searchable property within a configuration.
 | PropertyTypeName | string | CLR type name, stored for compilation |
 | DisplayName | string? | Custom label, falls back to property name |
 | UseExactMatch | bool | Strings: exact vs contains/wildcard |
+| UseRangeFilter | bool | Enable From/To range for dates and numerics |
 | SortOrder | int | Display order in search form |
 | IsReferenceProperty | bool | Navigation/lookup property flag |
 | ReferencedTypeName | string? | CLR type of referenced entity |
@@ -67,19 +68,23 @@ Takes a `SearchConfiguration` with its `Fields` collection and:
    - `[DomainComponent]` + `[XafDisplayName("Search {Name}")]`
    - One property per `SearchField`, correctly typed
    - Reference properties use the referenced type directly (XAF handles lookup editors)
-2. Compiles via Roslyn into a non-collectible `AssemblyLoadContext`
+2. Compiles via Roslyn into `AssemblyLoadContext.Default`
 3. Returns the compiled `Type` and the source string
 
 ### SearchDtoRegistry (Singleton Service)
 
-- Holds `Dictionary<int, (Type DtoType, string Source)>` keyed by `SearchConfiguration.ID`
-- **Startup:** loads all active configs, compiles, registers with `XafTypesInfo.Instance.RegisterEntity()` + `AdditionalExportedTypes`
-- **Runtime change:** recompiles affected DTO, re-registers (old type leaks harmlessly in memory)
+- Holds `Dictionary<int, RegistryEntry>` keyed by `SearchConfiguration.ID`
+- **Startup:** `CompileFromDatabase()` creates a raw `DbContext` using the connection string, loads all active configs, compiles each, registers with `XafTypesInfo.Instance.RegisterEntity()` + `AdditionalExportedTypes`
+- **Runtime change:** `CompileAndRegister()` compiles and caches for next restart
 - Provides source string for export
 
-### Key Insight: No Restart Required
+### Why Restart Is Required
 
-`NonPersistentBaseObject` DTOs have no database table, no EF Core model involvement, no DDL. This eliminates the entire restart mechanism that XafDynamicAssemblies needed.
+Types must be registered with `XafTypesInfo` and `AdditionalExportedTypes` **before** XAF's model generation runs. Model generation happens during `base.Setup()` in the module lifecycle. If types are registered after model generation, their `IModelClass` nodes lack `TypeInfo`, causing `NullReferenceException` in `CreateDetailView`. This is the same constraint that XafDynamicAssemblies has for persistent entity types.
+
+### Model Editor Customizations
+
+Because types are compiled from the database on every startup (before model generation), XAF creates proper `IModelClass` nodes each time. Any Model Editor layout customizations saved in `Model.User*.xafml` are loaded and applied correctly. Only orphaned entries (for deleted/deactivated configs) are cleaned up to prevent startup crashes.
 
 ## Controllers
 
@@ -87,8 +92,10 @@ Takes a `SearchConfiguration` with its `Fields` collection and:
 
 Actions:
 - **Populate Properties** — reads target entity's `ITypeInfo`, enumerates members, populates `Fields` with eligible properties (strings, numerics, dates, bools, enums, references)
-- **Compile & Activate** — triggers `SearchDtoCompiler`, registers via `SearchDtoRegistry`
-- **Export C# Source** — displays generated `.cs` in popup or downloads as file
+- **Compile & Activate** — triggers `SearchDtoCompiler`, caches via `SearchDtoRegistry`. Restart required to activate.
+- **Export C# Source** — displays generated `.cs` in popup
+
+Auto-compiles on save when config is active and has fields.
 
 ### SearchPanelController (ViewController<ListView>)
 
@@ -111,25 +118,29 @@ Reusable criteria-building logic (ported from WLNCentral):
 
 ### Startup
 
-1. `XafSearchModule.Setup()` fires
-2. Queries all `SearchConfiguration` where `IsActive = true`
-3. `SearchDtoCompiler.Compile()` for each → gets Type
-4. Registers with `XafTypesInfo` + `AdditionalExportedTypes`
-5. `SearchDtoRegistry` caches type + source per config ID
+1. `XafSearchModule.Setup(XafApplication)` fires
+2. `SearchDtoRegistry.CompileFromDatabase()` creates a raw `DbContext` using `application.ConnectionString`
+3. Loads all `SearchConfiguration` where `IsActive = true` with their fields
+4. `SearchDtoCompiler.Compile()` for each → gets Type
+5. Registers each with `XafTypesInfo.Instance.RegisterEntity()` + `module.AdditionalExportedTypes`
+6. `CleanOrphanedModelDiffs()` removes `Model.User*.xafml` entries for deleted configs only
+7. `base.Setup()` proceeds → XAF model generation creates proper `IModelClass` nodes with full `TypeInfo`
 
 ### Runtime Config Change
 
-1. Admin creates/edits `SearchConfiguration`, clicks "Compile & Activate"
-2. New type compiled and registered
-3. Next ListView open picks up the new search panel
-4. DTO's DetailView appears in Model Editor for layout customization
+1. Admin creates/edits `SearchConfiguration`, saves or clicks "Compile & Activate"
+2. New type compiled and cached in registry
+3. **Restart required** — message tells user to restart
+4. After restart, `CompileFromDatabase` picks up the config, type gets proper model nodes
+5. DTO's DetailView appears in Model Editor for layout customization
 
 ### Ad-hoc Generation (from any ListView)
 
 1. User triggers "Generate Search Panel" on a ListView with no config
 2. Creates `SearchConfiguration`, auto-populates all eligible properties
 3. Opens DetailView for admin to customize
-4. Save triggers compile & register
+4. Save triggers compile & cache
+5. Restart required to activate
 
 ## Export C# Source
 
@@ -146,17 +157,24 @@ The "Export C# Source" action produces a complete `.cs` file containing:
 | SearchConfiguration | BusinessObjects/ | Persisted search panel definition |
 | SearchField | BusinessObjects/ | Property selection with display/order/match settings |
 | SearchDtoCompiler | Services/ | Roslyn: metadata to DTO type + source |
-| SearchDtoRegistry | Services/ | Singleton cache, startup bootstrap, type registration |
+| SearchDtoRegistry | Services/ | Singleton: compiles from DB on startup, type registration |
+| CriteriaBuilder | Services/ | Shared filter criteria building logic |
 | SearchControllerBase\<T,D\> | Controllers/ | Reusable popup + criteria building logic |
 | SearchConfigurationController | Controllers/ | Populate, compile, activate, export |
 | SearchPanelController | Controllers/ | Generic "Advanced Search" on any ListView |
+| GenerateSearchPanelController | Controllers/ | Ad-hoc config creation from any ListView |
 
 ## What's NOT Needed (vs XafDynamicAssemblies)
 
 - No SchemaSynchronizer — no database tables for DTOs
 - No DynamicModelCacheKeyFactory — no EF Core model changes
-- No restart mechanism — NonPersistentBaseObject registers cleanly
+- No assembly disk cache — types are compiled fresh from DB on each startup
 - No AssemblyGenerationManager lifecycle — old types leak harmlessly
+
+## Shared with XafDynamicAssemblies
+
+- **Restart required** — types must exist before model generation for proper `TypeInfo`
+- **Roslyn compilation** — runtime code generation via `Microsoft.CodeAnalysis.CSharp`
 
 ## Supported Property Types
 

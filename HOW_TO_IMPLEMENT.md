@@ -4,6 +4,8 @@ This guide walks through adding the XafSearch runtime search panel feature to an
 
 The search panel system allows you to define searchable fields for any entity at runtime through a configuration UI, compile them into dynamic search DTOs using Roslyn, and present users with an "Advanced Search" popup on any ListView. Once satisfied with a configuration, you can export it as a standalone `.cs` file and remove the runtime configuration entirely.
 
+**Important:** New or changed search configurations require an application restart to activate. Types must be compiled and registered before XAF's model generation for proper `TypeInfo` and Model Editor support.
+
 ---
 
 ## Prerequisites
@@ -77,7 +79,7 @@ After copying, perform a find-and-replace across all copied files:
 
 **Important:** In `SearchDtoCompiler.cs`, the constant `RuntimeNamespace` is set to `"XafSearch.RuntimeSearch"`. You may want to change this to match your own project name (e.g., `"YourApp.RuntimeSearch"`). This namespace is used for the dynamically compiled DTO types.
 
-In `SearchConfigurationController.cs`, update the module type reference on line 113-114:
+In `SearchConfigurationController.cs`, update the module type reference:
 
 ```csharp
 // Change this:
@@ -108,44 +110,38 @@ These two tables store the runtime search panel configurations and their field d
 
 ---
 
-## Step 4: Bootstrap the Registry
+## Step 4: Compile from Database on Startup
 
-In your Module class (the one that inherits from `ModuleBase`), add the bootstrap logic in the `Setup` method. This ensures all active search configurations are compiled and registered when the application starts.
-
-```csharp
-public override void Setup(XafApplication application)
-{
-    base.Setup(application);
-    application.SetupComplete += Application_SetupComplete;
-}
-
-private void Application_SetupComplete(object sender, EventArgs e)
-{
-    var application = (XafApplication)sender;
-    application.SetupComplete -= Application_SetupComplete;
-
-    try
-    {
-        using var objectSpace = application.CreateObjectSpace(typeof(SearchConfiguration));
-        SearchDtoRegistry.Instance.Bootstrap(objectSpace, this);
-    }
-    catch (Exception ex)
-    {
-        Tracing.Tracer.LogError($"SearchDtoRegistry bootstrap failed: {ex.Message}");
-    }
-}
-```
-
-Required usings:
+In your Module class (the one that inherits from `ModuleBase`), add the compilation logic in the `Setup(XafApplication)` method. This must run **before** `base.Setup()` so types are registered before XAF's model generation.
 
 ```csharp
 using DevExpress.ExpressApp;
 using DevExpress.Persistent.Base;
-using YourApp.Module.BusinessObjects;
+using System.Xml.Linq;
 using YourApp.Module.Services;
+
+public override void Setup(XafApplication application)
+{
+    // Compile all active search configs from DB BEFORE model generation
+    // so XAF creates proper IModelClass nodes with full TypeInfo.
+#pragma warning disable XAF0013
+    var compiledTypes = SearchDtoRegistry.Instance.CompileFromDatabase(application.ConnectionString, this);
+#pragma warning restore XAF0013
+
+    // Remove model diff entries for deleted configs (preserves active config layouts)
+    CleanOrphanedModelDiffs(compiledTypes);
+
+    base.Setup(application);
+}
 ```
 
-The bootstrap process loads all `SearchConfiguration` records where `IsActive == true`, compiles each one into a DTO type using Roslyn, and registers those types with `XafTypesInfo` so that XAF recognizes them as non-persistent domain components.
+The `#pragma warning disable XAF0013` suppresses the XAF analyzer warning about accessing `application.ConnectionString` — this is intentional because DI is not available yet at this point in the lifecycle.
+
+**How it works:** `CompileFromDatabase` creates a raw `DbContext` using the connection string, loads all active `SearchConfiguration` records with their fields, compiles each into a DTO type via Roslyn, and registers them with `XafTypesInfo.Instance.RegisterEntity()` and `module.AdditionalExportedTypes`. Because this runs before `base.Setup()`, XAF's model generation sees the types and creates proper `IModelClass` nodes with full `TypeInfo`.
+
+**Model diff cleanup:** `CleanOrphanedModelDiffs` removes `Model.User*.xafml` entries for runtime search types that no longer have active configurations. This prevents startup crashes from orphaned model entries referencing non-existent types. Entries for active configs are preserved, so Model Editor layout customizations persist.
+
+Add the cleanup helper methods (see `XafSearch.Module/Module.cs` for the full implementation of `CleanOrphanedModelDiffs` and `CleanModelFile`).
 
 ---
 
@@ -213,14 +209,14 @@ After populating, review the generated fields in the **Fields** list:
 
 ### 7.3 Compile and Activate
 
-1. Save the configuration.
-2. Click the **Compile & Activate** action button.
+1. Save the configuration. If the configuration is active and has fields, it auto-compiles on save.
+2. Alternatively, click the **Compile & Activate** action button for manual compilation.
 3. If compilation succeeds, you will see a confirmation message with the generated DTO type name.
-4. If compilation fails, the error messages will indicate what went wrong (see Troubleshooting below).
+4. **Restart the application** to activate the search panel. Types must be registered before model generation.
 
 ### 7.4 Use the Search Panel
 
-1. Navigate to the target entity's **ListView** (e.g., the Customer list).
+1. After restarting, navigate to the target entity's **ListView** (e.g., the Customer list).
 2. An **Advanced Search** action button now appears in the toolbar.
 3. Click it to open a popup form with all the configured search fields.
 4. Fill in any combination of fields and click **OK** to apply the filter.
@@ -235,7 +231,7 @@ The search DTO's DetailView can be customized through the XAF Model Editor:
 2. Navigate to **Views** and locate the DetailView for the generated DTO (e.g., `CustomerSearchDTO_DetailView`).
 3. Rearrange fields, set column spans, group fields, or adjust editor settings as desired.
 
-Note: The DTO type name follows the pattern `{EntityShortName}SearchDTO` under the runtime namespace. Model Editor customizations persist across recompilations as long as the DTO type name stays the same.
+Note: The DTO type name follows the pattern `{EntityShortName}SearchDTO` under the runtime namespace. Model Editor customizations persist across restarts as long as the configuration stays active. Only orphaned entries (for deleted/deactivated configs) are cleaned up.
 
 ### 7.6 Generate Search Panel from a ListView
 
@@ -245,6 +241,7 @@ As an alternative to manually creating a configuration, you can generate one dir
 2. If no search panel exists for that entity, a **Generate Search Panel** action button appears in the Tools category.
 3. Clicking it creates a pre-populated `SearchConfiguration` in a modal window with all eligible properties already filled in.
 4. Review, customize, save, and compile as described above.
+5. Restart the application to activate the search panel.
 
 ---
 
@@ -314,12 +311,13 @@ Common causes:
 - **Invalid property type names:** If a `SearchField` has a `PropertyTypeName` that does not resolve to a valid CLR type, compilation fails. Re-run Populate Properties to refresh the field metadata.
 - **Namespace conflicts:** If your entity lives in a namespace that conflicts with a generated `using` directive, you may need to adjust the `RuntimeNamespace` constant in `SearchDtoCompiler.cs`.
 
-### Search panel does not appear on the ListView
+### Search panel does not appear on the ListView after restart
 
 1. **Check IsActive:** The `SearchConfiguration` record must have `IsActive` set to `true`.
-2. **Check compilation:** The configuration must be compiled successfully. Open the configuration and click Compile & Activate. Look for success or error messages.
-3. **Restart on first run:** The bootstrap process runs during `Application.SetupComplete`. If you created a new configuration and compiled it within the same session, it should be immediately available. However, if the application was restarted before the configuration was compiled, you need to compile it again after startup.
+2. **Check compilation:** The configuration must have been compiled at least once before the restart. Open the configuration and click Compile & Activate, then restart.
+3. **Check fields:** The configuration must have at least one field with a valid `PropertyName` and `PropertyTypeName`.
 4. **Verify NonPersistent provider:** If `.AddNonPersistent()` is missing from your ObjectSpaceProviders, the application cannot create object spaces for the DTO types. This typically causes an exception rather than a silent failure.
+5. **Check logs:** `SearchDtoRegistry` logs compilation failures to `Tracing.Tracer`. Check the XAF trace output for error messages.
 
 ### Duplicate "Advanced Search" buttons
 
@@ -337,3 +335,10 @@ To fix: either deactivate/delete the runtime `SearchConfiguration`, or remove th
 ### CriteriaBuilder does not handle a custom property type
 
 `CriteriaBuilder` handles strings, dates, booleans, numeric types, and XAF business objects (detected by the presence of an `Oid` or `ID` property). For unsupported types, it falls back to an equality comparison. If you need custom logic for a specific type, modify the `CreateCriterion` method in `CriteriaBuilder.cs`.
+
+### Application crashes on startup with "localizationNode is null"
+
+This typically means `Model.User*.xafml` contains entries for runtime search types that no longer exist (deleted or deactivated configurations). The `CleanOrphanedModelDiffs` method in Module.cs should handle this automatically. If it persists:
+
+1. Delete `Model.User.xafml` from the application's output directory.
+2. Restart the application. Model Editor customizations for active configs will need to be recreated.

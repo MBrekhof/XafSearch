@@ -16,27 +16,30 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
 
     public SearchConfigurationController()
     {
-        populateAction = new SimpleAction(this, "PopulateProperties", PredefinedCategory.Edit)
+        populateAction = new SimpleAction(this, "PopulateProperties", PredefinedCategory.View)
         {
             Caption = "Populate Properties",
             ImageName = "Action_Reload",
-            ToolTip = "Read properties from the target entity and populate the fields list"
+            ToolTip = "Read properties from the target entity and populate the fields list",
+            PaintStyle = DevExpress.ExpressApp.Templates.ActionItemPaintStyle.CaptionAndImage
         };
         populateAction.Execute += PopulateAction_Execute;
 
-        compileAction = new SimpleAction(this, "CompileAndActivate", PredefinedCategory.Edit)
+        compileAction = new SimpleAction(this, "CompileAndActivate", PredefinedCategory.View)
         {
             Caption = "Compile & Activate",
             ImageName = "Action_Grant",
-            ToolTip = "Compile the search DTO and register it with XAF"
+            ToolTip = "Compile the search DTO and register it with XAF",
+            PaintStyle = DevExpress.ExpressApp.Templates.ActionItemPaintStyle.CaptionAndImage
         };
         compileAction.Execute += CompileAction_Execute;
 
-        exportAction = new SimpleAction(this, "ExportCSharpSource", PredefinedCategory.Export)
+        exportAction = new SimpleAction(this, "ExportCSharpSource", PredefinedCategory.View)
         {
             Caption = "Export C# Source",
             ImageName = "Action_Export",
-            ToolTip = "Generate and display the C# source code for this search panel"
+            ToolTip = "Generate and display the C# source code for this search panel",
+            PaintStyle = DevExpress.ExpressApp.Templates.ActionItemPaintStyle.CaptionAndImage
         };
         exportAction.Execute += ExportAction_Execute;
     }

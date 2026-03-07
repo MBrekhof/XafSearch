@@ -1,9 +1,12 @@
 using DevExpress.Data.Filtering;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.Actions;
+using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.Editors;
+using DevExpress.ExpressApp.Layout;
 using DevExpress.ExpressApp.Model;
 using DevExpress.Persistent.Base;
+using System.Reflection;
 using XafSearch.Module.Services;
 
 namespace XafSearch.Module.Controllers;
@@ -60,9 +63,7 @@ public class SearchPanelController : ViewController<ListView>
         var os = Application.CreateObjectSpace(_dtoType);
         var searchObj = os.CreateObject(_dtoType);
 
-        // Runtime-compiled DTO types don't have model nodes.
-        // Ensure BOModel class + DetailView exist in the application model.
-        var detailViewId = EnsureModelNodes(_dtoType);
+        var detailViewId = EnsureDetailView(_dtoType);
 
         var detailView = Application.CreateDetailView(os, detailViewId, true, searchObj);
         detailView.ViewEditMode = ViewEditMode.Edit;
@@ -70,31 +71,68 @@ public class SearchPanelController : ViewController<ListView>
         e.Maximized = false;
     }
 
-    /// <summary>
-    /// Ensures the application model has a BOModel class and DetailView for the given type.
-    /// Returns the DetailView ID.
-    /// </summary>
-    private string EnsureModelNodes(Type type)
+    private string EnsureDetailView(Type type)
     {
         var detailViewId = $"{type.FullName.Replace(".", "_")}_DetailView";
 
-        // Check if DetailView already exists
-        if (Application.Model.Views[detailViewId] is IModelDetailView)
+        // Check if DetailView already exists with items
+        if (Application.Model.Views[detailViewId] is IModelDetailView existing
+            && existing.Items.Count > 0)
             return detailViewId;
 
-        // Ensure BOModel class exists
+        // Ensure BOModel class
         var boModel = Application.Model.BOModel;
         var modelClass = boModel.GetClass(type);
         if (modelClass == null)
         {
-            // Add the class to BOModel
             modelClass = boModel.AddNode<IModelClass>(type.FullName);
             modelClass.SetValue("Name", type.FullName);
         }
 
-        // Create DetailView node
-        var detailViewModel = Application.Model.Views.AddNode<IModelDetailView>(detailViewId);
-        detailViewModel.ModelClass = modelClass;
+        // Create or get DetailView
+        IModelDetailView detailViewModel;
+        if (Application.Model.Views[detailViewId] is IModelDetailView existingView)
+        {
+            detailViewModel = existingView;
+        }
+        else
+        {
+            detailViewModel = Application.Model.Views.AddNode<IModelDetailView>(detailViewId);
+            detailViewModel.ModelClass = modelClass;
+        }
+
+        // Populate items from the DTO's public properties (skip Oid)
+        if (detailViewModel.Items.Count == 0)
+        {
+            var typeInfo = XafTypesInfo.Instance.FindTypeInfo(type);
+            if (typeInfo != null)
+            {
+                foreach (var member in typeInfo.Members)
+                {
+                    if (member.Name == "Oid") continue;
+                    if (!member.IsPublic || !member.IsVisible) continue;
+
+                    var itemId = member.Name;
+                    if (detailViewModel.Items[itemId] != null) continue;
+
+                    var propertyEditor = detailViewModel.Items.AddNode<IModelPropertyEditor>(itemId);
+                    propertyEditor.PropertyName = member.Name;
+                }
+            }
+
+            // Create a simple vertical layout group
+            if (detailViewModel.Layout.Count == 0)
+            {
+                var mainGroup = detailViewModel.Layout.AddNode<IModelLayoutGroup>("Main");
+                mainGroup.Direction = FlowDirection.Vertical;
+
+                foreach (var item in detailViewModel.Items.OfType<IModelPropertyEditor>())
+                {
+                    var layoutItem = mainGroup.AddNode<IModelLayoutViewItem>(((IModelViewItem)item).Id);
+                    layoutItem.ViewItem = item;
+                }
+            }
+        }
 
         return detailViewId;
     }

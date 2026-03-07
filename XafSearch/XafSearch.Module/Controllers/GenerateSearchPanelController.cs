@@ -3,6 +3,7 @@ using DevExpress.ExpressApp.Actions;
 using DevExpress.Persistent.Base;
 using XafSearch.Module.BusinessObjects;
 using XafSearch.Module.Services;
+using DevExpress.ExpressApp.DC;
 
 namespace XafSearch.Module.Controllers;
 
@@ -57,7 +58,7 @@ public class GenerateSearchPanelController : ViewController<ListView>
         var typeInfo = View.ObjectTypeInfo;
         foreach (var member in typeInfo.Members.OrderBy(m => m.Name))
         {
-            if (!IsEligibleProperty(member)) continue;
+            if (!PropertyEligibility.IsEligibleProperty(member)) continue;
 
             var field = os.CreateObject<SearchField>();
             field.PropertyName = member.Name;
@@ -79,26 +80,4 @@ public class GenerateSearchPanelController : ViewController<ListView>
         e.ShowViewParameters.TargetWindow = TargetWindow.NewModalWindow;
     }
 
-    private static bool IsEligibleProperty(DevExpress.ExpressApp.DC.IMemberInfo member)
-    {
-        if (!member.IsPublic || !member.IsVisible) return false;
-        if (member.IsKey) return false;
-        if (member.Name is "Oid" or "ID" or "GCRecord" or "OptimisticLockField" or "ObjectType") return false;
-        if (member.IsList) return false;
-
-        var type = member.MemberType;
-        if (type == typeof(string)) return true;
-        if (type == typeof(int) || type == typeof(int?)) return true;
-        if (type == typeof(long) || type == typeof(long?)) return true;
-        if (type == typeof(decimal) || type == typeof(decimal?)) return true;
-        if (type == typeof(double) || type == typeof(double?)) return true;
-        if (type == typeof(float) || type == typeof(float?)) return true;
-        if (type == typeof(bool) || type == typeof(bool?)) return true;
-        if (type == typeof(DateTime) || type == typeof(DateTime?)) return true;
-        if (type == typeof(Guid) || type == typeof(Guid?)) return true;
-        if (type.IsEnum) return true;
-        if (member.MemberTypeInfo?.IsPersistent == true) return true;
-
-        return false;
-    }
 }

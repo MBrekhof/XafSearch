@@ -75,6 +75,15 @@ public class SearchDtoCompiler
         sb.AppendLine("using DevExpress.ExpressApp.Model;");
         sb.AppendLine("using DevExpress.Persistent.Base;");
         sb.AppendLine("using DevExpress.ExpressApp;");
+        sb.AppendLine("using XafSearch.Module.Attributes;");
+
+        var lastDot = config.TargetEntityType.LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            var targetNamespace = config.TargetEntityType.Substring(0, lastDot);
+            sb.AppendLine($"using {targetNamespace};");
+        }
+
         sb.AppendLine();
         sb.AppendLine($"namespace {RuntimeNamespace}");
         sb.AppendLine("{");
@@ -95,6 +104,10 @@ public class SearchDtoCompiler
             else
             {
                 var clrType = GetNullableTypeName(field.PropertyTypeName);
+                if (field.PropertyTypeName == "System.String" && field.UseExactMatch)
+                {
+                    sb.AppendLine($"        [UseExactMatch]");
+                }
                 if (field.PropertyTypeName == "System.String" && !field.UseExactMatch)
                 {
                     sb.AppendLine($"        [ToolTip(\"Supports wildcards: * (any chars), ? (single char)\")]");

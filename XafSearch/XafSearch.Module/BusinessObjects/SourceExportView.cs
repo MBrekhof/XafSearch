@@ -14,7 +14,6 @@ public class SourceExportView : NonPersistentBaseObject
 
     [XafDisplayName("Source Code")]
     [StringLength(int.MaxValue)]
-    [EditorAlias(DevExpress.ExpressApp.Editors.EditorAliases.StringPropertyEditor)]
     public string SourceCode { get; set; }
 
     public override string ToString() => FileName ?? "Source Code";

@@ -117,14 +117,15 @@ public class SearchFieldLookupController : ObjectViewController<DetailView, Sear
         var member = typeInfo?.FindMember(field.PropertyName);
         if (member == null) return;
 
-        field.PropertyTypeName = member.MemberType.FullName;
+        // Store the underlying type, not the Nullable wrapper
+        var underlyingType = Nullable.GetUnderlyingType(member.MemberType) ?? member.MemberType;
+        field.PropertyTypeName = underlyingType.FullName;
         field.DisplayName = member.DisplayName ?? member.Name;
         field.IsReferenceProperty = member.MemberTypeInfo?.IsPersistent == true;
         field.ReferencedTypeName = field.IsReferenceProperty ? member.MemberType.FullName : null;
 
         // Auto-suggest range filter for dates and numerics
-        var typeName = member.MemberType.FullName;
-        if (typeName is "System.DateTime" or "System.Int32" or "System.Int64"
+        if (underlyingType.FullName is "System.DateTime" or "System.Int32" or "System.Int64"
             or "System.Decimal" or "System.Double" or "System.Single")
         {
             field.UseRangeFilter = true;

@@ -120,8 +120,9 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
             if (!PropertyEligibility.IsEligibleProperty(member)) continue;
 
             var field = ObjectSpace.CreateObject<SearchField>();
+            var underlyingType = Nullable.GetUnderlyingType(member.MemberType) ?? member.MemberType;
             field.PropertyName = member.Name;
-            field.PropertyTypeName = member.MemberType.FullName;
+            field.PropertyTypeName = underlyingType.FullName;
             field.DisplayName = member.DisplayName ?? member.Name;
             field.SortOrder = sortOrder++;
             field.IsReferenceProperty = member.MemberTypeInfo?.IsPersistent == true;

@@ -114,11 +114,12 @@ public class SearchDtoCompiler
             {
                 sb.AppendLine($"        [XafDisplayName(\"{EscapeString(displayName)}\")]");
                 var clrType = GetNullableTypeName(field.PropertyTypeName);
-                if (field.PropertyTypeName == "System.String" && field.UseExactMatch)
+                var normalizedType = NormalizeTypeName(field.PropertyTypeName);
+                if (normalizedType == "System.String" && field.UseExactMatch)
                 {
                     sb.AppendLine($"        [UseExactMatch]");
                 }
-                if (field.PropertyTypeName == "System.String" && !field.UseExactMatch)
+                if (normalizedType == "System.String" && !field.UseExactMatch)
                 {
                     sb.AppendLine($"        [ToolTip(\"Supports wildcards: * (any chars), ? (single char)\")]");
                 }
@@ -160,23 +161,53 @@ public class SearchDtoCompiler
         return sb.ToString();
     }
 
-    private static string GetNullableTypeName(string typeName) => typeName switch
+    /// <summary>
+    /// Strips Nullable wrapper from CLR type names.
+    /// e.g. "System.Nullable`1[[System.Int32, ...]]" => "System.Int32"
+    /// </summary>
+    private static string NormalizeTypeName(string typeName)
     {
-        "System.String" => "string",
-        "System.Int32" => "int?",
-        "System.Int64" => "long?",
-        "System.Decimal" => "decimal?",
-        "System.Double" => "double?",
-        "System.Single" => "float?",
-        "System.Boolean" => "bool?",
-        "System.DateTime" => "DateTime?",
-        "System.Guid" => "Guid?",
-        _ => typeName + "?"
-    };
+        if (string.IsNullOrWhiteSpace(typeName)) return typeName;
+        if (typeName.StartsWith("System.Nullable`1"))
+        {
+            var start = typeName.IndexOf("[[");
+            var end = typeName.IndexOf(',', start > 0 ? start : 0);
+            if (start >= 0 && end >= 0)
+                return typeName.Substring(start + 2, end - start - 2);
+            // Simpler form: System.Nullable`1[System.Int32]
+            start = typeName.IndexOf('[');
+            end = typeName.IndexOf(']');
+            if (start >= 0 && end >= 0)
+                return typeName.Substring(start + 1, end - start - 1);
+        }
+        return typeName;
+    }
 
-    private static bool IsRangeEligibleType(string typeName) => typeName is
-        "System.DateTime" or "System.Int32" or "System.Int64" or
-        "System.Decimal" or "System.Double" or "System.Single";
+    private static string GetNullableTypeName(string typeName)
+    {
+        var normalized = NormalizeTypeName(typeName);
+        return normalized switch
+        {
+            "System.String" => "string",
+            "System.Int32" => "int?",
+            "System.Int64" => "long?",
+            "System.Decimal" => "decimal?",
+            "System.Double" => "double?",
+            "System.Single" => "float?",
+            "System.Boolean" => "bool?",
+            "System.DateTime" => "DateTime?",
+            "System.Guid" => "Guid?",
+            _ when normalized.Contains('`') => "object", // safety fallback for generics
+            _ => normalized + "?"
+        };
+    }
+
+    private static bool IsRangeEligibleType(string typeName)
+    {
+        var normalized = NormalizeTypeName(typeName);
+        return normalized is "System.DateTime" or "System.Int32" or "System.Int64"
+            or "System.Decimal" or "System.Double" or "System.Single";
+    }
 
     private static string EscapeString(string value)
         => value?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? string.Empty;

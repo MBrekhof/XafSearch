@@ -1,6 +1,7 @@
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.Persistent.Base;
+using Microsoft.EntityFrameworkCore;
 using XafSearch.Module.BusinessObjects;
 
 namespace XafSearch.Module.Services;
@@ -18,75 +19,81 @@ public class SearchDtoRegistry
     private SearchDtoRegistry() { }
 
     /// <summary>
-    /// Loads cached assemblies from disk and registers DTO types BEFORE model generation.
-    /// Called from Module.Setup() so that XAF's model generators create proper model classes.
+    /// Compiles all active search configurations directly from the database.
+    /// Called from Module.Setup() BEFORE model generation so types get proper IModelClass nodes.
     /// </summary>
-    public void LoadCachedAssemblies(ModuleBase module)
+    public void CompileFromDatabase(string connectionString, ModuleBase module)
     {
-        var cached = SearchDtoCompiler.LoadCachedAssemblies();
-        foreach (var info in cached)
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+
+        try
         {
-            lock (_lock)
+            var optionsBuilder = new DbContextOptionsBuilder<XafSearchEFCoreDbContext>();
+            optionsBuilder.UseSqlServer(connectionString);
+
+            using var ctx = new XafSearchEFCoreDbContext(optionsBuilder.Options);
+
+            // Gracefully handle missing tables (first run before migrations)
+            List<SearchConfiguration> configs;
+            try
             {
-                var entry = new RegistryEntry
+                configs = ctx.SearchConfigurations
+                    .Include(c => c.Fields)
+                    .Where(c => c.IsActive && c.TargetEntityType != null)
+                    .ToList();
+            }
+            catch
+            {
+                return; // DB not ready yet
+            }
+
+            int compiled = 0;
+            foreach (var config in configs)
+            {
+                if (config.Fields.Count == 0) continue;
+
+                var result = _compiler.Compile(config);
+                if (!result.Success)
                 {
-                    ConfigurationId = info.ConfigId,
-                    DtoType = info.DtoType,
-                    Source = null, // Source not cached; regenerated on demand
-                    TargetEntityType = info.TargetEntityType
-                };
+                    Tracing.Tracer.LogError($"Search DTO compilation failed for '{config.Name}': {string.Join("; ", result.Errors)}");
+                    continue;
+                }
 
-                _entries[info.ConfigId] = entry;
-                _entityTypeIndex[info.TargetEntityType] = info.ConfigId;
+                lock (_lock)
+                {
+                    var entry = new RegistryEntry
+                    {
+                        ConfigurationId = config.ID,
+                        DtoType = result.DtoType,
+                        Source = result.Source,
+                        TargetEntityType = config.TargetEntityType
+                    };
 
-                XafTypesInfo.Instance.RegisterEntity(info.DtoType);
-                module.AdditionalExportedTypes.Add(info.DtoType);
+                    _entries[config.ID] = entry;
+                    _entityTypeIndex[config.TargetEntityType] = config.ID;
+
+                    XafTypesInfo.Instance.RegisterEntity(result.DtoType);
+                    module.AdditionalExportedTypes.Add(result.DtoType);
+                }
+
+                compiled++;
+            }
+
+            if (compiled > 0)
+            {
+                Tracing.Tracer.LogText($"SearchDtoRegistry: compiled {compiled} search panel(s) from database.");
             }
         }
-
-        if (cached.Count > 0)
+        catch (Exception ex)
         {
-            Tracing.Tracer.LogText($"SearchDtoRegistry: loaded {cached.Count} cached search panel(s).");
+            Tracing.Tracer.LogError($"SearchDtoRegistry.CompileFromDatabase failed: {ex.Message}");
         }
     }
 
     /// <summary>
-    /// Recompiles any active configs that aren't already loaded from cache.
-    /// Called from SetupComplete when database access is available.
+    /// Compiles a single configuration and registers the DTO type.
+    /// Used for manual compile during a session (requires restart to activate).
     /// </summary>
-    public void Bootstrap(IObjectSpace objectSpace, ModuleBase module)
-    {
-        var configs = objectSpace.GetObjectsQuery<SearchConfiguration>()
-            .Where(c => c.IsActive)
-            .ToList();
-
-        int compiled = 0;
-        foreach (var config in configs)
-        {
-            // Skip if already loaded from cache
-            if (_entries.ContainsKey(config.ID))
-                continue;
-
-            CompileAndRegister(config, module);
-            compiled++;
-        }
-
-        // Clean up cache entries for configs that no longer exist or are inactive
-        var activeIds = configs.Select(c => c.ID).ToHashSet();
-        List<int> toRemove;
-        lock (_lock)
-        {
-            toRemove = _entries.Keys.Where(id => !activeIds.Contains(id)).ToList();
-        }
-        foreach (var id in toRemove)
-        {
-            Unregister(id, module);
-            SearchDtoCompiler.RemoveFromCache(id);
-        }
-
-        Tracing.Tracer.LogText($"SearchDtoRegistry bootstrapped: {_entries.Count} panel(s) total, {compiled} freshly compiled.");
-    }
-
     public CompilationResult CompileAndRegister(SearchConfiguration config, ModuleBase module)
     {
         var result = _compiler.Compile(config);

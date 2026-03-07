@@ -3,7 +3,6 @@ using Microsoft.CodeAnalysis.CSharp;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text;
-using System.Text.Json;
 using XafSearch.Module.BusinessObjects;
 
 namespace XafSearch.Module.Services;
@@ -11,12 +10,6 @@ namespace XafSearch.Module.Services;
 public class SearchDtoCompiler
 {
     private const string RuntimeNamespace = "XafSearch.RuntimeSearch";
-    private const string CacheDirectoryName = "SearchDtoCache";
-
-    public static string GetCacheDirectory()
-    {
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CacheDirectoryName);
-    }
 
     public CompilationResult Compile(SearchConfiguration config)
     {
@@ -60,99 +53,9 @@ public class SearchDtoCompiler
         if (result.DtoType == null)
         {
             result.Errors = new List<string> { $"Compiled assembly does not contain type '{dtoTypeName}'" };
-            return result;
         }
-
-        // Save to cache for early loading on next startup
-        SaveToCache(config.ID, ms.ToArray(), config.TargetEntityType, dtoTypeName);
 
         return result;
-    }
-
-    /// <summary>
-    /// Loads all cached assemblies from the cache directory.
-    /// Returns metadata for each successfully loaded assembly.
-    /// </summary>
-    public static List<CachedDtoInfo> LoadCachedAssemblies()
-    {
-        var results = new List<CachedDtoInfo>();
-        var cacheDir = GetCacheDirectory();
-
-        if (!Directory.Exists(cacheDir))
-            return results;
-
-        foreach (var metaFile in Directory.GetFiles(cacheDir, "*.json"))
-        {
-            try
-            {
-                var json = File.ReadAllText(metaFile);
-                var meta = JsonSerializer.Deserialize<CacheMetadata>(json);
-                if (meta == null) continue;
-
-                var dllPath = Path.Combine(cacheDir, $"{meta.ConfigId}.dll");
-                if (!File.Exists(dllPath)) continue;
-
-                var assemblyBytes = File.ReadAllBytes(dllPath);
-                using var ms = new MemoryStream(assemblyBytes);
-                var assembly = AssemblyLoadContext.Default.LoadFromStream(ms);
-                var dtoType = assembly.GetType(meta.DtoTypeName);
-
-                if (dtoType != null)
-                {
-                    results.Add(new CachedDtoInfo
-                    {
-                        ConfigId = meta.ConfigId,
-                        TargetEntityType = meta.TargetEntityType,
-                        DtoType = dtoType
-                    });
-                }
-            }
-            catch
-            {
-                // Skip corrupted cache entries
-            }
-        }
-
-        return results;
-    }
-
-    /// <summary>
-    /// Removes a cached assembly for a given config ID.
-    /// </summary>
-    public static void RemoveFromCache(int configId)
-    {
-        var cacheDir = GetCacheDirectory();
-        var dllPath = Path.Combine(cacheDir, $"{configId}.dll");
-        var metaPath = Path.Combine(cacheDir, $"{configId}.json");
-
-        try { if (File.Exists(dllPath)) File.Delete(dllPath); } catch { }
-        try { if (File.Exists(metaPath)) File.Delete(metaPath); } catch { }
-    }
-
-    private void SaveToCache(int configId, byte[] assemblyBytes, string targetEntityType, string dtoTypeName)
-    {
-        try
-        {
-            var cacheDir = GetCacheDirectory();
-            Directory.CreateDirectory(cacheDir);
-
-            var dllPath = Path.Combine(cacheDir, $"{configId}.dll");
-            var metaPath = Path.Combine(cacheDir, $"{configId}.json");
-
-            File.WriteAllBytes(dllPath, assemblyBytes);
-
-            var meta = new CacheMetadata
-            {
-                ConfigId = configId,
-                TargetEntityType = targetEntityType,
-                DtoTypeName = dtoTypeName
-            };
-            File.WriteAllText(metaPath, JsonSerializer.Serialize(meta));
-        }
-        catch
-        {
-            // Cache write failure is non-critical
-        }
     }
 
     public string GenerateSource(SearchConfiguration config)
@@ -259,7 +162,6 @@ public class SearchDtoCompiler
 
     /// <summary>
     /// Strips Nullable wrapper from CLR type names.
-    /// e.g. "System.Nullable`1[[System.Int32, ...]]" => "System.Int32"
     /// </summary>
     private static string NormalizeTypeName(string typeName)
     {
@@ -270,7 +172,6 @@ public class SearchDtoCompiler
             var end = typeName.IndexOf(',', start > 0 ? start : 0);
             if (start >= 0 && end >= 0)
                 return typeName.Substring(start + 2, end - start - 2);
-            // Simpler form: System.Nullable`1[System.Int32]
             start = typeName.IndexOf('[');
             end = typeName.IndexOf(']');
             if (start >= 0 && end >= 0)
@@ -281,7 +182,7 @@ public class SearchDtoCompiler
 
     private static string GetNullableTypeName(string typeName)
     {
-        if (string.IsNullOrWhiteSpace(typeName)) return "string"; // default fallback
+        if (string.IsNullOrWhiteSpace(typeName)) return "string";
         var normalized = NormalizeTypeName(typeName);
         return normalized switch
         {
@@ -294,7 +195,7 @@ public class SearchDtoCompiler
             "System.Boolean" => "bool?",
             "System.DateTime" => "DateTime?",
             "System.Guid" => "Guid?",
-            _ when normalized.Contains('`') => "object", // safety fallback for generics
+            _ when normalized.Contains('`') => "object",
             _ => normalized + "?"
         };
     }
@@ -345,18 +246,4 @@ public class CompilationResult
     public string Source { get; set; }
     public List<string> Errors { get; set; } = new();
     public bool Success => Errors.Count == 0 && DtoType != null;
-}
-
-public class CacheMetadata
-{
-    public int ConfigId { get; set; }
-    public string TargetEntityType { get; set; }
-    public string DtoTypeName { get; set; }
-}
-
-public class CachedDtoInfo
-{
-    public int ConfigId { get; set; }
-    public string TargetEntityType { get; set; }
-    public Type DtoType { get; set; }
 }

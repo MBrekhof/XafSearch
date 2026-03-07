@@ -2,19 +2,14 @@ using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.Updating;
 using DevExpress.Persistent.Base;
 using System.Xml.Linq;
-using XafSearch.Module.BusinessObjects;
 using XafSearch.Module.Services;
 
 namespace XafSearch.Module
 {
-    // For more typical usage scenarios, be sure to check out https://docs.devexpress.com/eXpressAppFramework/DevExpress.ExpressApp.ModuleBase.
     public sealed class XafSearchModule : ModuleBase
     {
         public XafSearchModule()
         {
-            //
-            // XafSearchModule
-            //
             RequiredModuleTypes.Add(typeof(DevExpress.ExpressApp.SystemModule.SystemModule));
             RequiredModuleTypes.Add(typeof(DevExpress.ExpressApp.Chart.ChartModule));
             RequiredModuleTypes.Add(typeof(DevExpress.ExpressApp.ConditionalAppearance.ConditionalAppearanceModule));
@@ -30,39 +25,26 @@ namespace XafSearch.Module
             AdditionalExportedTypes.Add(typeof(DevExpress.Persistent.BaseImpl.EF.FileAttachment));
             AdditionalExportedTypes.Add(typeof(DevExpress.Persistent.BaseImpl.EF.HCategory));
         }
+
         public override IEnumerable<ModuleUpdater> GetModuleUpdaters(IObjectSpace objectSpace, Version versionFromDB)
         {
             ModuleUpdater updater = new DatabaseUpdate.Updater(objectSpace, versionFromDB);
             return new ModuleUpdater[] { updater };
         }
+
         public override void Setup(XafApplication application)
         {
-            // Clean persisted model diffs that reference runtime-compiled search DTO types.
-            // These are recreated each session via cached assemblies + model generation.
+            // Clean persisted model diffs for runtime search types (from previous sessions).
             CleanRuntimeSearchModelDiffs();
 
-            // Load cached assemblies BEFORE base.Setup() so that types are registered
-            // before model generation runs. This ensures proper IModelClass creation.
-            SearchDtoRegistry.Instance.LoadCachedAssemblies(this);
+            // Compile all active search configs from DB BEFORE model generation
+            // so XAF creates proper IModelClass nodes with full TypeInfo.
+            // We need the connection string before DI/IServiceProvider is available.
+#pragma warning disable XAF0013
+            SearchDtoRegistry.Instance.CompileFromDatabase(application.ConnectionString, this);
+#pragma warning restore XAF0013
 
             base.Setup(application);
-            application.SetupComplete += Application_SetupComplete;
-        }
-
-        private void Application_SetupComplete(object sender, EventArgs e)
-        {
-            var application = (XafApplication)sender;
-            application.SetupComplete -= Application_SetupComplete;
-
-            try
-            {
-                using var objectSpace = application.CreateObjectSpace(typeof(SearchConfiguration));
-                SearchDtoRegistry.Instance.Bootstrap(objectSpace, this);
-            }
-            catch (Exception ex)
-            {
-                Tracing.Tracer.LogError($"SearchDtoRegistry bootstrap failed: {ex.Message}");
-            }
         }
 
         private static void CleanRuntimeSearchModelDiffs()
@@ -75,10 +57,7 @@ namespace XafSearch.Module
                     CleanModelFile(file);
                 }
             }
-            catch
-            {
-                // Non-critical cleanup
-            }
+            catch { }
         }
 
         private static void CleanModelFile(string path)
@@ -114,14 +93,9 @@ namespace XafSearch.Module
                 }
 
                 if (modified)
-                {
                     doc.Save(path);
-                }
             }
-            catch
-            {
-                // Ignore per-file errors
-            }
+            catch { }
         }
 
         public override void Setup(ApplicationModulesManager moduleManager)

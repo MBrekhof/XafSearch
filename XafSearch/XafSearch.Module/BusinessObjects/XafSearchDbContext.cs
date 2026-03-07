@@ -19,6 +19,8 @@ namespace XafSearch.Module.BusinessObjects
         public DbSet<ReportDataV2> ReportDataV2 { get; set; }
         public DbSet<DashboardData> DashboardData { get; set; }
         public DbSet<HCategory> HCategories { get; set; }
+        public DbSet<SearchConfiguration> SearchConfigurations { get; set; }
+        public DbSet<SearchField> SearchFields { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

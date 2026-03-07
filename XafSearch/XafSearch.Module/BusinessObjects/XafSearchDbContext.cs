@@ -21,6 +21,7 @@ namespace XafSearch.Module.BusinessObjects
         public DbSet<HCategory> HCategories { get; set; }
         public DbSet<SearchConfiguration> SearchConfigurations { get; set; }
         public DbSet<SearchField> SearchFields { get; set; }
+        public DbSet<SampleCustomer> SampleCustomers { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

@@ -14,24 +14,105 @@ public static class CriteriaBuilder
 
         var properties = searchObj.GetType()
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.Name != "Oid");
+            .Where(p => p.CanRead && p.Name != "Oid")
+            .ToList();
+
+        // Collect range property names (From/To pairs) so we handle them together
+        var rangeBaseNames = new HashSet<string>();
+        foreach (var prop in properties)
+        {
+            if (prop.Name.EndsWith("From") || prop.Name.EndsWith("To"))
+            {
+                var baseName = prop.Name.EndsWith("From")
+                    ? prop.Name[..^4]
+                    : prop.Name[..^2];
+                // Only treat as range if both From and To exist
+                var hasPair = properties.Any(p =>
+                    p.Name == baseName + "From" || p.Name == baseName + "To");
+                var hasOther = prop.Name.EndsWith("From")
+                    ? properties.Any(p => p.Name == baseName + "To")
+                    : properties.Any(p => p.Name == baseName + "From");
+                if (hasOther)
+                    rangeBaseNames.Add(baseName);
+            }
+        }
+
+        var processedRanges = new HashSet<string>();
 
         foreach (var prop in properties)
         {
             if (filterCount >= maxFilters) break;
 
+            // Handle range pairs
+            var baseName = GetRangeBaseName(prop.Name, rangeBaseNames);
+            if (baseName != null)
+            {
+                if (processedRanges.Contains(baseName)) continue;
+                processedRanges.Add(baseName);
+
+                var fromProp = properties.FirstOrDefault(p => p.Name == baseName + "From");
+                var toProp = properties.FirstOrDefault(p => p.Name == baseName + "To");
+                var fromVal = fromProp?.GetValue(searchObj);
+                var toVal = toProp?.GetValue(searchObj);
+
+                var criterion = CreateRangeCriterion(baseName, fromVal, toVal);
+                if (criterion is not null)
+                {
+                    groupOp.Operands.Add(criterion);
+                    filterCount++;
+                }
+                continue;
+            }
+
             var val = prop.GetValue(searchObj);
             if (IsNullOrEmpty(val)) continue;
 
-            var criterion = CreateCriterion(prop, val);
-            if (criterion is not null)
+            var singleCriterion = CreateCriterion(prop, val);
+            if (singleCriterion is not null)
             {
-                groupOp.Operands.Add(criterion);
+                groupOp.Operands.Add(singleCriterion);
                 filterCount++;
             }
         }
 
         return groupOp.Operands.Count > 0 ? groupOp : null;
+    }
+
+    private static string GetRangeBaseName(string propertyName, HashSet<string> rangeBaseNames)
+    {
+        foreach (var baseName in rangeBaseNames)
+        {
+            if (propertyName == baseName + "From" || propertyName == baseName + "To")
+                return baseName;
+        }
+        return null;
+    }
+
+    private static CriteriaOperator CreateRangeCriterion(string propertyName, object fromVal, object toVal)
+    {
+        bool hasFrom = !IsNullOrEmpty(fromVal);
+        bool hasTo = !IsNullOrEmpty(toVal);
+
+        if (!hasFrom && !hasTo) return null;
+
+        // For DateTime, use date boundaries
+        if (fromVal is DateTime || toVal is DateTime)
+        {
+            var ops = new List<CriteriaOperator>();
+            if (hasFrom && fromVal is DateTime fromDate)
+                ops.Add(new BinaryOperator(propertyName, fromDate.Date, BinaryOperatorType.GreaterOrEqual));
+            if (hasTo && toVal is DateTime toDate)
+                ops.Add(new BinaryOperator(propertyName, toDate.Date.AddDays(1), BinaryOperatorType.Less));
+            return ops.Count == 1 ? ops[0] : new GroupOperator(GroupOperatorType.And, ops);
+        }
+
+        // For numerics
+        var numOps = new List<CriteriaOperator>();
+        if (hasFrom)
+            numOps.Add(new BinaryOperator(propertyName, fromVal, BinaryOperatorType.GreaterOrEqual));
+        if (hasTo)
+            numOps.Add(new BinaryOperator(propertyName, toVal, BinaryOperatorType.LessOrEqual));
+        return numOps.Count == 1 ? numOps[0] : new GroupOperator(GroupOperatorType.And, numOps);
     }
 
     public static int GetActiveFilterCount(object searchObj)

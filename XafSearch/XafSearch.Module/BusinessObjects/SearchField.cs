@@ -23,6 +23,10 @@ public class SearchField : BaseObjectInt
     [XafDisplayName("Exact Match")]
     public virtual bool UseExactMatch { get; set; }
 
+    [XafDisplayName("Range Filter")]
+    [DevExpress.Persistent.Base.ToolTip("Generate From/To fields for range filtering (dates, numbers)")]
+    public virtual bool UseRangeFilter { get; set; }
+
     [XafDisplayName("Sort Order")]
     public virtual int SortOrder { get; set; }
 

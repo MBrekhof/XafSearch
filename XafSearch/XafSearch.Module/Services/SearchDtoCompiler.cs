@@ -95,14 +95,24 @@ public class SearchDtoCompiler
         foreach (var field in fields)
         {
             var displayName = field.DisplayName ?? field.PropertyName;
-            sb.AppendLine($"        [XafDisplayName(\"{EscapeString(displayName)}\")]");
 
             if (field.IsReferenceProperty && !string.IsNullOrWhiteSpace(field.ReferencedTypeName))
             {
+                sb.AppendLine($"        [XafDisplayName(\"{EscapeString(displayName)}\")]");
                 sb.AppendLine($"        public {field.ReferencedTypeName} {field.PropertyName} {{ get; set; }}");
+            }
+            else if (field.UseRangeFilter && IsRangeEligibleType(field.PropertyTypeName))
+            {
+                var clrType = GetNullableTypeName(field.PropertyTypeName);
+                sb.AppendLine($"        [XafDisplayName(\"{EscapeString(displayName)} (From)\")]");
+                sb.AppendLine($"        public {clrType} {field.PropertyName}From {{ get; set; }}");
+                sb.AppendLine();
+                sb.AppendLine($"        [XafDisplayName(\"{EscapeString(displayName)} (To)\")]");
+                sb.AppendLine($"        public {clrType} {field.PropertyName}To {{ get; set; }}");
             }
             else
             {
+                sb.AppendLine($"        [XafDisplayName(\"{EscapeString(displayName)}\")]");
                 var clrType = GetNullableTypeName(field.PropertyTypeName);
                 if (field.PropertyTypeName == "System.String" && field.UseExactMatch)
                 {
@@ -163,6 +173,10 @@ public class SearchDtoCompiler
         "System.Guid" => "Guid?",
         _ => typeName + "?"
     };
+
+    private static bool IsRangeEligibleType(string typeName) => typeName is
+        "System.DateTime" or "System.Int32" or "System.Int64" or
+        "System.Decimal" or "System.Double" or "System.Single";
 
     private static string EscapeString(string value)
         => value?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? string.Empty;

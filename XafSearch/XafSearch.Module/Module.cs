@@ -8,8 +8,11 @@ using DevExpress.ExpressApp.Model.DomainLogics;
 using DevExpress.ExpressApp.Model.NodeGenerators;
 using DevExpress.ExpressApp.ReportsV2;
 using DevExpress.ExpressApp.Updating;
+using DevExpress.ExpressApp.Utils;
 using DevExpress.Persistent.Base;
 using System.ComponentModel;
+using XafSearch.Module.BusinessObjects;
+using XafSearch.Module.Services;
 
 namespace XafSearch.Module
 {
@@ -44,7 +47,23 @@ namespace XafSearch.Module
         public override void Setup(XafApplication application)
         {
             base.Setup(application);
-            // Manage various aspects of the application UI and behavior at the module level.
+            application.SetupComplete += Application_SetupComplete;
+        }
+
+        private void Application_SetupComplete(object sender, EventArgs e)
+        {
+            var application = (XafApplication)sender;
+            application.SetupComplete -= Application_SetupComplete;
+
+            try
+            {
+                using var objectSpace = application.CreateObjectSpace(typeof(SearchConfiguration));
+                SearchDtoRegistry.Instance.Bootstrap(objectSpace, this);
+            }
+            catch (Exception ex)
+            {
+                Tracing.Tracer.LogError($"SearchDtoRegistry bootstrap failed: {ex.Message}");
+            }
         }
         public override void Setup(ApplicationModulesManager moduleManager)
         {

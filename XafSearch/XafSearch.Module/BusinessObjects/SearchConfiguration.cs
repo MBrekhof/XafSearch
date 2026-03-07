@@ -1,4 +1,5 @@
 using DevExpress.ExpressApp.DC;
+using DevExpress.ExpressApp.Model;
 using DevExpress.Persistent.Base;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -14,6 +15,7 @@ public class SearchConfiguration : BaseObjectInt
     public virtual string Name { get; set; }
 
     [XafDisplayName("Target Entity Type")]
+    [ImmediatePostData]
     public virtual string TargetEntityType { get; set; }
 
     [XafDisplayName("Active")]

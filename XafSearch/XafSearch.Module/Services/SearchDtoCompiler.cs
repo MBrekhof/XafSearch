@@ -64,7 +64,7 @@ public class SearchDtoCompiler
         var targetShortName = config.TargetEntityType.Split('.').Last();
         var dtoName = $"{targetShortName}SearchDTO";
         var fields = config.Fields
-            .Where(f => !string.IsNullOrWhiteSpace(f.PropertyName))
+            .Where(f => !string.IsNullOrWhiteSpace(f.PropertyName) && !string.IsNullOrWhiteSpace(f.PropertyTypeName))
             .OrderBy(f => f.SortOrder)
             .ToList();
 
@@ -185,6 +185,7 @@ public class SearchDtoCompiler
 
     private static string GetNullableTypeName(string typeName)
     {
+        if (string.IsNullOrWhiteSpace(typeName)) return "string"; // default fallback
         var normalized = NormalizeTypeName(typeName);
         return normalized switch
         {

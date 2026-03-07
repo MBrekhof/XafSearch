@@ -78,8 +78,8 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
         if (result.Success)
         {
             Application.ShowViewStrategy.ShowMessage(
-                $"Search panel auto-compiled: {result.DtoType.Name}",
-                InformationType.Success, 3000, InformationPosition.Top);
+                $"Search panel compiled and cached: {result.DtoType.Name}. Restart the application to activate.",
+                InformationType.Success, 5000, InformationPosition.Top);
         }
         else
         {
@@ -176,8 +176,8 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
         if (result.Success)
         {
             Application.ShowViewStrategy.ShowMessage(
-                $"Search panel compiled and activated: {result.DtoType.FullName}",
-                InformationType.Success, 3000, InformationPosition.Top);
+                $"Search panel compiled and cached: {result.DtoType.FullName}. Restart the application to activate.",
+                InformationType.Success, 5000, InformationPosition.Top);
         }
         else
         {
@@ -259,7 +259,7 @@ public class SearchConfigurationListController : ObjectViewController<ListView, 
                 failed++;
         }
 
-        var message = $"Compiled {success} search panel(s).";
+        var message = $"Compiled {success} search panel(s). Restart the application to activate.";
         if (failed > 0)
             message += $" {failed} failed.";
 

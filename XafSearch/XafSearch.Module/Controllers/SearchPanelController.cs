@@ -57,14 +57,12 @@ public class SearchPanelController : ViewController<ListView>
     {
         if (_dtoType == null) return;
 
-        // Ensure model nodes exist (they may have been cleaned from persisted model on startup)
-        SearchDtoRegistry.Instance.EnsureModelNodes(_dtoType, Application.Model);
-
         var os = Application.CreateObjectSpace(_dtoType);
         var searchObj = os.CreateObject(_dtoType);
 
-        var detailViewId = $"{_dtoType.FullName.Replace(".", "_")}_DetailView";
-        var detailView = Application.CreateDetailView(os, detailViewId, true, searchObj);
+        // Types loaded from cache are registered before model generation,
+        // so XAF creates proper model classes and default DetailViews automatically.
+        var detailView = Application.CreateDetailView(os, searchObj);
         detailView.ViewEditMode = ViewEditMode.Edit;
         e.View = detailView;
         e.Maximized = false;

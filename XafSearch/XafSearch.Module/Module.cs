@@ -38,9 +38,12 @@ namespace XafSearch.Module
         public override void Setup(XafApplication application)
         {
             // Clean persisted model diffs that reference runtime-compiled search DTO types.
-            // These types don't exist yet at model-load time (compiled later in SetupComplete)
-            // and would cause "localizationNode is null" assertion failures.
+            // These are recreated each session via cached assemblies + model generation.
             CleanRuntimeSearchModelDiffs();
+
+            // Load cached assemblies BEFORE base.Setup() so that types are registered
+            // before model generation runs. This ensures proper IModelClass creation.
+            SearchDtoRegistry.Instance.LoadCachedAssemblies(this);
 
             base.Setup(application);
             application.SetupComplete += Application_SetupComplete;
@@ -74,8 +77,7 @@ namespace XafSearch.Module
             }
             catch
             {
-                // Non-critical — if cleaning fails, the worst case is the startup crash
-                // the user already knows about, and they can delete Model.User.xafml manually.
+                // Non-critical cleanup
             }
         }
 
@@ -86,7 +88,6 @@ namespace XafSearch.Module
                 var doc = XDocument.Load(path);
                 bool modified = false;
 
-                // Remove BOModel/Class nodes for runtime search types
                 foreach (var node in doc.Descendants("Class")
                     .Where(c => c.Attribute("Name")?.Value?.StartsWith("XafSearch.RuntimeSearch.") == true)
                     .ToList())
@@ -95,7 +96,6 @@ namespace XafSearch.Module
                     modified = true;
                 }
 
-                // Remove Views/DetailView nodes for runtime search types
                 foreach (var node in doc.Descendants("DetailView")
                     .Where(v => v.Attribute("Id")?.Value?.StartsWith("XafSearch_RuntimeSearch_") == true
                              || v.Attribute("ClassName")?.Value?.StartsWith("XafSearch.RuntimeSearch.") == true)
@@ -105,7 +105,6 @@ namespace XafSearch.Module
                     modified = true;
                 }
 
-                // Remove FormState nodes for runtime search popup windows
                 foreach (var node in doc.Descendants("FormState")
                     .Where(f => f.Attribute("Id")?.Value?.StartsWith("XafSearch_RuntimeSearch_") == true)
                     .ToList())
@@ -121,7 +120,7 @@ namespace XafSearch.Module
             }
             catch
             {
-                // Ignore per-file errors — non-critical cleanup
+                // Ignore per-file errors
             }
         }
 

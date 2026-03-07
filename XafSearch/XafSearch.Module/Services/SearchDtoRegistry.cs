@@ -66,12 +66,6 @@ public class SearchDtoRegistry
             module.AdditionalExportedTypes.Add(result.DtoType);
         }
 
-        // Create model nodes so the DetailView can be opened
-        if (module.Application?.Model != null)
-        {
-            EnsureModelNodes(result.DtoType, module.Application.Model);
-        }
-
         Tracing.Tracer.LogText($"Search DTO registered: {result.DtoType.FullName} for {config.TargetEntityType}");
         return result;
     }

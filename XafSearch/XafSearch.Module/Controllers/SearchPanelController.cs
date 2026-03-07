@@ -2,6 +2,7 @@ using DevExpress.Data.Filtering;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.Actions;
 using DevExpress.ExpressApp.Editors;
+using DevExpress.ExpressApp.Model;
 using DevExpress.Persistent.Base;
 using XafSearch.Module.Services;
 
@@ -23,7 +24,8 @@ public class SearchPanelController : ViewController<ListView>
             Caption = "Advanced Search",
             ImageName = "Action_Search",
             ToolTip = "Open advanced search panel",
-            SelectionDependencyType = SelectionDependencyType.Independent
+            SelectionDependencyType = SelectionDependencyType.Independent,
+            PaintStyle = DevExpress.ExpressApp.Templates.ActionItemPaintStyle.CaptionAndImage
         };
 
         searchAction.CustomizePopupWindowParams += SearchAction_CustomizePopupWindowParams;
@@ -57,10 +59,44 @@ public class SearchPanelController : ViewController<ListView>
 
         var os = Application.CreateObjectSpace(_dtoType);
         var searchObj = os.CreateObject(_dtoType);
-        var detailView = Application.CreateDetailView(os, searchObj);
+
+        // Runtime-compiled DTO types don't have model nodes.
+        // Ensure BOModel class + DetailView exist in the application model.
+        var detailViewId = EnsureModelNodes(_dtoType);
+
+        var detailView = Application.CreateDetailView(os, detailViewId, true, searchObj);
         detailView.ViewEditMode = ViewEditMode.Edit;
         e.View = detailView;
         e.Maximized = false;
+    }
+
+    /// <summary>
+    /// Ensures the application model has a BOModel class and DetailView for the given type.
+    /// Returns the DetailView ID.
+    /// </summary>
+    private string EnsureModelNodes(Type type)
+    {
+        var detailViewId = $"{type.FullName.Replace(".", "_")}_DetailView";
+
+        // Check if DetailView already exists
+        if (Application.Model.Views[detailViewId] is IModelDetailView)
+            return detailViewId;
+
+        // Ensure BOModel class exists
+        var boModel = Application.Model.BOModel;
+        var modelClass = boModel.GetClass(type);
+        if (modelClass == null)
+        {
+            // Add the class to BOModel
+            modelClass = boModel.AddNode<IModelClass>(type.FullName);
+            modelClass.SetValue("Name", type.FullName);
+        }
+
+        // Create DetailView node
+        var detailViewModel = Application.Model.Views.AddNode<IModelDetailView>(detailViewId);
+        detailViewModel.ModelClass = modelClass;
+
+        return detailViewId;
     }
 
     private void SearchAction_Execute(object sender, PopupWindowShowActionExecuteEventArgs e)

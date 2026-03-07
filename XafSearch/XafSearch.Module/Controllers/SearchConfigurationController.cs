@@ -8,6 +8,10 @@ using XafSearch.Module.Services;
 
 namespace XafSearch.Module.Controllers;
 
+/// <summary>
+/// DetailView controller: Populate, Compile & Activate, Export actions.
+/// Auto-compiles on save when config has fields and is active.
+/// </summary>
 public class SearchConfigurationController : ObjectViewController<DetailView, SearchConfiguration>
 {
     private SimpleAction populateAction;
@@ -42,6 +46,47 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
             PaintStyle = DevExpress.ExpressApp.Templates.ActionItemPaintStyle.CaptionAndImage
         };
         exportAction.Execute += ExportAction_Execute;
+    }
+
+    protected override void OnActivated()
+    {
+        base.OnActivated();
+        ObjectSpace.Committed += ObjectSpace_Committed;
+    }
+
+    protected override void OnDeactivated()
+    {
+        ObjectSpace.Committed -= ObjectSpace_Committed;
+        base.OnDeactivated();
+    }
+
+    private void ObjectSpace_Committed(object sender, EventArgs e)
+    {
+        var config = ViewCurrentObject;
+        if (config == null) return;
+        if (!config.IsActive) return;
+        if (string.IsNullOrWhiteSpace(config.TargetEntityType)) return;
+        if (config.Fields.Count == 0) return;
+
+        var module = Application.Modules
+            .OfType<XafSearchModule>()
+            .FirstOrDefault();
+        if (module == null) return;
+
+        var result = SearchDtoRegistry.Instance.CompileAndRegister(config, module);
+
+        if (result.Success)
+        {
+            Application.ShowViewStrategy.ShowMessage(
+                $"Search panel auto-compiled: {result.DtoType.Name}",
+                InformationType.Success, 3000, InformationPosition.Top);
+        }
+        else
+        {
+            Application.ShowViewStrategy.ShowMessage(
+                $"Auto-compile failed: {string.Join("; ", result.Errors.Take(3))}",
+                InformationType.Warning, 5000, InformationPosition.Top);
+        }
     }
 
     private void PopulateAction_Execute(object sender, SimpleActionExecuteEventArgs e)
@@ -114,7 +159,7 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
         }
 
         var module = Application.Modules
-            .OfType<XafSearch.Module.XafSearchModule>()
+            .OfType<XafSearchModule>()
             .FirstOrDefault();
 
         if (module == null)
@@ -165,5 +210,61 @@ public class SearchConfigurationController : ObjectViewController<DetailView, Se
         e.ShowViewParameters.CreatedView = detailView;
         e.ShowViewParameters.TargetWindow = TargetWindow.NewModalWindow;
     }
+}
 
+/// <summary>
+/// ListView controller: "Compile All" action to batch-compile all active configurations.
+/// </summary>
+public class SearchConfigurationListController : ObjectViewController<ListView, SearchConfiguration>
+{
+    private SimpleAction compileAllAction;
+
+    public SearchConfigurationListController()
+    {
+        compileAllAction = new SimpleAction(this, "CompileAllSearchPanels", PredefinedCategory.View)
+        {
+            Caption = "Compile All",
+            ImageName = "Action_Grant",
+            ToolTip = "Compile and activate all active search configurations",
+            PaintStyle = DevExpress.ExpressApp.Templates.ActionItemPaintStyle.CaptionAndImage,
+            SelectionDependencyType = SelectionDependencyType.Independent
+        };
+        compileAllAction.Execute += CompileAllAction_Execute;
+    }
+
+    private void CompileAllAction_Execute(object sender, SimpleActionExecuteEventArgs e)
+    {
+        var module = Application.Modules
+            .OfType<XafSearchModule>()
+            .FirstOrDefault();
+
+        if (module == null) return;
+
+        var configs = ObjectSpace.GetObjectsQuery<SearchConfiguration>()
+            .Where(c => c.IsActive && c.TargetEntityType != null)
+            .ToList();
+
+        int success = 0;
+        int failed = 0;
+
+        foreach (var config in configs)
+        {
+            if (config.Fields.Count == 0) continue;
+
+            var result = SearchDtoRegistry.Instance.CompileAndRegister(config, module);
+            if (result.Success)
+                success++;
+            else
+                failed++;
+        }
+
+        var message = $"Compiled {success} search panel(s).";
+        if (failed > 0)
+            message += $" {failed} failed.";
+
+        Application.ShowViewStrategy.ShowMessage(
+            message,
+            failed > 0 ? InformationType.Warning : InformationType.Success,
+            3000, InformationPosition.Top);
+    }
 }

@@ -1,16 +1,7 @@
-﻿using DevExpress.ExpressApp;
-using DevExpress.ExpressApp.Actions;
-using DevExpress.ExpressApp.DC;
-using DevExpress.ExpressApp.Editors;
-using DevExpress.ExpressApp.Model;
-using DevExpress.ExpressApp.Model.Core;
-using DevExpress.ExpressApp.Model.DomainLogics;
-using DevExpress.ExpressApp.Model.NodeGenerators;
-using DevExpress.ExpressApp.ReportsV2;
+using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.Updating;
-using DevExpress.ExpressApp.Utils;
 using DevExpress.Persistent.Base;
-using System.ComponentModel;
+using System.Xml.Linq;
 using XafSearch.Module.BusinessObjects;
 using XafSearch.Module.Services;
 
@@ -46,6 +37,11 @@ namespace XafSearch.Module
         }
         public override void Setup(XafApplication application)
         {
+            // Clean persisted model diffs that reference runtime-compiled search DTO types.
+            // These types don't exist yet at model-load time (compiled later in SetupComplete)
+            // and would cause "localizationNode is null" assertion failures.
+            CleanRuntimeSearchModelDiffs();
+
             base.Setup(application);
             application.SetupComplete += Application_SetupComplete;
         }
@@ -65,6 +61,70 @@ namespace XafSearch.Module
                 Tracing.Tracer.LogError($"SearchDtoRegistry bootstrap failed: {ex.Message}");
             }
         }
+
+        private static void CleanRuntimeSearchModelDiffs()
+        {
+            try
+            {
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                foreach (var file in Directory.GetFiles(baseDir, "Model.User*.xafml"))
+                {
+                    CleanModelFile(file);
+                }
+            }
+            catch
+            {
+                // Non-critical — if cleaning fails, the worst case is the startup crash
+                // the user already knows about, and they can delete Model.User.xafml manually.
+            }
+        }
+
+        private static void CleanModelFile(string path)
+        {
+            try
+            {
+                var doc = XDocument.Load(path);
+                bool modified = false;
+
+                // Remove BOModel/Class nodes for runtime search types
+                foreach (var node in doc.Descendants("Class")
+                    .Where(c => c.Attribute("Name")?.Value?.StartsWith("XafSearch.RuntimeSearch.") == true)
+                    .ToList())
+                {
+                    node.Remove();
+                    modified = true;
+                }
+
+                // Remove Views/DetailView nodes for runtime search types
+                foreach (var node in doc.Descendants("DetailView")
+                    .Where(v => v.Attribute("Id")?.Value?.StartsWith("XafSearch_RuntimeSearch_") == true
+                             || v.Attribute("ClassName")?.Value?.StartsWith("XafSearch.RuntimeSearch.") == true)
+                    .ToList())
+                {
+                    node.Remove();
+                    modified = true;
+                }
+
+                // Remove FormState nodes for runtime search popup windows
+                foreach (var node in doc.Descendants("FormState")
+                    .Where(f => f.Attribute("Id")?.Value?.StartsWith("XafSearch_RuntimeSearch_") == true)
+                    .ToList())
+                {
+                    node.Remove();
+                    modified = true;
+                }
+
+                if (modified)
+                {
+                    doc.Save(path);
+                }
+            }
+            catch
+            {
+                // Ignore per-file errors — non-critical cleanup
+            }
+        }
+
         public override void Setup(ApplicationModulesManager moduleManager)
         {
             base.Setup(moduleManager);

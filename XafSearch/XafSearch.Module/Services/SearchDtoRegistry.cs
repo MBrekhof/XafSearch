@@ -1,5 +1,8 @@
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
+using DevExpress.ExpressApp.Editors;
+using DevExpress.ExpressApp.Layout;
+using DevExpress.ExpressApp.Model;
 using DevExpress.Persistent.Base;
 using XafSearch.Module.BusinessObjects;
 
@@ -63,8 +66,80 @@ public class SearchDtoRegistry
             module.AdditionalExportedTypes.Add(result.DtoType);
         }
 
+        // Create model nodes so the DetailView can be opened
+        if (module.Application?.Model != null)
+        {
+            EnsureModelNodes(result.DtoType, module.Application.Model);
+        }
+
         Tracing.Tracer.LogText($"Search DTO registered: {result.DtoType.FullName} for {config.TargetEntityType}");
         return result;
+    }
+
+    public void EnsureModelNodes(Type dtoType, IModelApplication model)
+    {
+        if (model == null || dtoType == null) return;
+
+        var detailViewId = $"{dtoType.FullName.Replace(".", "_")}_DetailView";
+
+        // Already set up with items - nothing to do
+        if (model.Views[detailViewId] is IModelDetailView existing
+            && existing.Items.Count > 0)
+            return;
+
+        // Ensure BOModel class
+        var boModel = model.BOModel;
+        var modelClass = boModel.GetClass(dtoType);
+        if (modelClass == null)
+        {
+            modelClass = boModel.AddNode<IModelClass>(dtoType.FullName);
+            modelClass.SetValue("Name", dtoType.FullName);
+        }
+
+        // Create or get DetailView
+        IModelDetailView detailViewModel;
+        if (model.Views[detailViewId] is IModelDetailView existingView)
+        {
+            detailViewModel = existingView;
+        }
+        else
+        {
+            detailViewModel = model.Views.AddNode<IModelDetailView>(detailViewId);
+            detailViewModel.ModelClass = modelClass;
+        }
+
+        // Populate items from the DTO's public properties (skip Oid)
+        if (detailViewModel.Items.Count == 0)
+        {
+            var typeInfo = XafTypesInfo.Instance.FindTypeInfo(dtoType);
+            if (typeInfo != null)
+            {
+                foreach (var member in typeInfo.Members)
+                {
+                    if (member.Name == "Oid") continue;
+                    if (!member.IsPublic || !member.IsVisible) continue;
+
+                    var itemId = member.Name;
+                    if (detailViewModel.Items[itemId] != null) continue;
+
+                    var propertyEditor = detailViewModel.Items.AddNode<IModelPropertyEditor>(itemId);
+                    propertyEditor.PropertyName = member.Name;
+                }
+            }
+
+            // Create a simple vertical layout group
+            if (detailViewModel.Layout.Count == 0)
+            {
+                var mainGroup = detailViewModel.Layout.AddNode<IModelLayoutGroup>("Main");
+                mainGroup.Direction = FlowDirection.Vertical;
+
+                foreach (var item in detailViewModel.Items.OfType<IModelPropertyEditor>())
+                {
+                    var layoutItem = mainGroup.AddNode<IModelLayoutViewItem>(((IModelViewItem)item).Id);
+                    layoutItem.ViewItem = item;
+                }
+            }
+        }
     }
 
     public void Unregister(int configId, ModuleBase module)
